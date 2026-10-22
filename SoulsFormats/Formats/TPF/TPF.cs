@@ -70,6 +70,22 @@ namespace SoulsFormats
             Encoding = br.AssertByte(0, 1, 2);
             br.AssertByte(0);
 
+            //We have to check if this is a Switch tpf because Virtuos used the PS4 enum
+            if (Platform == TPFPlatform.PS4 && br.Length >= 0x28)
+            {
+                br.StepIn(0x24);
+                //On PS4, this will always be the Unk2 texture metadata area, which we've only observed with values 0, 0x9, and 0xD,
+                // so we can take the highest, 0xD to compare against.
+                //On Switch, this will ALWAYS be either the pointer to the next texture or, in the case of a single texture, the texture name string
+                //String values will never be this low since only control characters of ids this low, and textures have headers so can never be tiny
+                // enough to disprove this.
+                if (br.ReadInt32() > 0xD)
+                {
+                    Platform = TPFPlatform.Switch;
+                }
+                br.StepOut();
+            }
+
             Textures = new List<Texture>(fileCount);
             for (int i = 0; i < fileCount; i++)
                 Textures.Add(new Texture(br, Platform, Flag2, Encoding));
@@ -91,7 +107,7 @@ namespace SoulsFormats
             bw.WriteASCII("TPF\0");
             bw.ReserveInt32("DataSize");
             bw.WriteInt32(Textures.Count);
-            bw.WriteByte((byte)Platform);
+            bw.WriteByte(Platform == TPFPlatform.Switch ? (byte)4 : (byte)Platform);
             bw.WriteByte(Flag2);
             bw.WriteByte(Encoding);
             bw.WriteByte(0);
@@ -107,7 +123,8 @@ namespace SoulsFormats
             {
                 bw.Pad(0x100);
                 texturePaddingSize = 0x80;
-            } else if (Platform == TPFPlatform.PS4)
+            }
+            else if (Platform == TPFPlatform.PS4)
             {
                 bw.Pad(0x10);
             }
@@ -220,11 +237,10 @@ namespace SoulsFormats
                     Type = TexType.TextureArray;
                 else
                     Type = TexType.Texture;
-                Mipmaps = (byte)dds.dwMipMapCount;
                 Platform = platform;
 
                 var potentialMagic = SFEncoding.ASCII.GetString(bytes, 0, 4);
-                if (Platform == TPFPlatform.PC || potentialMagic == "GNF ")
+                if (Platform == TPFPlatform.PC || Platform == TPFPlatform.Switch || potentialMagic == "GNF ")
                 {
                     Bytes = bytes;
                     return;
@@ -249,6 +265,9 @@ namespace SoulsFormats
                 }
 
                 var images = Headerizer.GetDDSTextureBuffers(dds, bytes);
+
+                //Set this here in case we need to adjust it
+                Mipmaps = (byte)dds.dwMipMapCount;
                 switch (Platform)
                 {
                     case TPFPlatform.Xbox360:
@@ -258,7 +277,7 @@ namespace SoulsFormats
                         //We need a swizzling solution before we can even think about this one.
                         throw new NotImplementedException("");
                     case TPFPlatform.PS3:
-                        Bytes = Headerizer.WritePS3Images(images);
+                        Bytes = Headerizer.WritePS3Images(images, dds, Format);
                         break;
                     case TPFPlatform.PS4:
                         Bytes = Headerizer.WritePS4Images(images, dds, Type);
@@ -281,7 +300,7 @@ namespace SoulsFormats
                 Mipmaps = br.ReadByte();
                 Flags1 = br.AssertByte(0, 1, 2, 3, 0x80);
 
-                if (platform != TPFPlatform.PC)
+                if (platform != TPFPlatform.PC && platform != TPFPlatform.Switch)
                 {
                     Header = new TexHeader();
                     Header.Width = br.ReadInt16();
@@ -368,7 +387,7 @@ namespace SoulsFormats
                 bw.WriteByte(Mipmaps);
                 bw.WriteByte(Flags1);
 
-                if (platform != TPFPlatform.PC)
+                if (platform != TPFPlatform.PC && platform != TPFPlatform.Switch)
                 {
                     bw.WriteInt16(Header.Width);
                     bw.WriteInt16(Header.Height);
@@ -458,6 +477,8 @@ namespace SoulsFormats
         {
             /// <summary>
             /// Headered DDS with minimal metadata.
+            /// May also be a QLOC Dark Souls Remastered PS4/XBone file.
+            /// In PS4's case, this will contain a headered GNF.
             /// </summary>
             PC = 0,
 
@@ -485,6 +506,13 @@ namespace SoulsFormats
             /// Headerless DDS with DX10 metadata.
             /// </summary>
             PS5 = 8,
+
+            /// <summary>
+            /// Virtuos Games, Switch enum. Technically 4, but conflicts with From Software's PS4 enum
+            /// Texture metadata is same as PC
+            /// Textures are headered .xtx
+            /// </summary>
+            Switch = 67,
         }
 
         /// <summary>
@@ -539,7 +567,7 @@ namespace SoulsFormats
             public int Unk1 { get; set; }
 
             /// <summary>
-            /// Unknown; 0xD in DS3.
+            /// Unknown; 0x9 some places, 0xD in DS3.
             /// </summary>
             public int Unk2 { get; set; }
 

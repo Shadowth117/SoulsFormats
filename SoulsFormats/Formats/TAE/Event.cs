@@ -32,16 +32,21 @@ namespace SoulsFormats
                 /// <summary>
                 /// Value of the specified parameter.
                 /// </summary>
-                public object this[string paramName]
+                public object? this[string paramName]
                 {
-                    get => parameterValues[paramName];
+                    get
+                    {
+                        if (parameterValues.ContainsKey(paramName))
+                            return parameterValues[paramName];
+                        return null;
+                    }
                     set => parameterValues[paramName] = value;
                 }
 
                 /// <summary>
                 /// Gets the value of a parameter.
                 /// </summary>
-                public object GetParamValue(string paramName)
+                public object? GetParamValue(string paramName)
                 {
                     return this[paramName];
                 }
@@ -180,15 +185,19 @@ namespace SoulsFormats
                         foreach (var paramKvp in Template)
                         {
                             var p = paramKvp.Value;
-                            if (p.ValueToAssert != null)
+                            var val = this[p.GetKeyString()];
+                            if (val != null)
+                            {
+                                p.WriteValue(bw, this[p.GetKeyString()]);
+                            }
+                            else if (p.ValueToAssert != null)
                             {
                                 p.WriteValue(bw, p.ValueToAssert);
                             }
                             else
                             {
-                                p.WriteValue(bw, this[p.GetKeyString()]);
+                                throw new Exception($"No parameter value found for {p.GetKeyString()} in event {Template.ID}.");
                             }
-
                         }
 
                         return memStream.ToArray();
@@ -308,7 +317,7 @@ namespace SoulsFormats
             /// Applies a template to allow editing of the parameters.
             /// </summary>
             internal void ApplyTemplate(TAE containingTae, TAE.Template template,
-                long animID, int eventIndex, int eventType)
+                long animID, int eventIndex, int eventType, bool strict = true)
             {
                 long? containingBank = null;
                 if (ValidateEventBank)
@@ -334,7 +343,7 @@ namespace SoulsFormats
                     Parameters = new ParameterContainer(animID, eventIndex,
                         containingTae.BigEndian, ParameterBytes, template[containingBank.Value][Type]);
                 }
-                else
+                else if (strict)
                 {
                     if (ValidateEventBank)
                         throw new InvalidOperationException($"Event bank {containingTae.EventBank} does not contains event type {eventType} in the TAE template.");
@@ -452,7 +461,7 @@ namespace SoulsFormats
                 bw.FillVarint($"EventDataOffset{animIndex}:{eventIndex}", bw.Position);
                 bw.WriteInt32(Type);
 
-                if (format != TAE.TAEFormat.DS1)
+                if (bw.VarintLong)
                     bw.WriteInt32(Unk04);
 
                 bool isWeirdEventWithNoParamOffset = format == TAE.TAEFormat.SDT && Type == 943;
